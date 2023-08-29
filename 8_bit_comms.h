@@ -79,11 +79,11 @@ void send_data(void){
       uint8_t temp_2 = temp_1 & start_byte;
       if ((receive_byte() != temp_2) || start_byte == 0){
         send_byte(start_byte);
-        out_data = 0;
         delayMicroseconds(100);
         error_counter = 1; 
       }
       else if (receive_byte() == temp_2){
+        out_data = 0;
         send_byte(out_data);
         prev_out_byte = out_data;
         start_byte = ~prev_out_byte;
@@ -93,6 +93,7 @@ void send_data(void){
       }
     }
     else{
+      out_data = 0;
       send_byte(out_data);                              // could also set predetermined value on lost connection (zero)
       prev_out_byte = out_data;
       start_byte = ~prev_out_byte;
