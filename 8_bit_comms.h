@@ -50,8 +50,11 @@ void setup_comms(void){
     pinMode(outputs_8_bit[i], OUTPUT);
     pinMode(inputs_8_bit[i], INPUT);
   }
+  prev_in_byte = receive_byte(); 
+  check_byte = ~prev_in_byte;
+  send_byte(check_byte); 
   timer1.attach_us(&send_receive_ack, 100);
-}  
+}
 
 //Write Functions
 
@@ -66,60 +69,83 @@ void send_byte(uint8_t data_out){
 void send_data(void){
 
   while(( micros() - t_output < 5000) && data_sent == 0){
-  uint8_t out_data = output_data_buffer[(output_buffer_counter-1)%buffer_len];
-  send_byte(start_byte);
-  double temp = micros();   
-  while ((micros() - temp < 100) && is_first_write == 1){};
-  is_first_write = 0;
-  temp = micros();  
-  
-  while ((micros() - temp < 300) && receive_byte() != prev_out_byte){}
-
-  if (receive_byte() == prev_out_byte){
-    send_byte(out_data); 
-    prev_out_byte = out_data;
-    start_byte = ~prev_out_byte;
-    check_byte = prev_out_byte; 
-    temp = micros();
-    while((micros() - temp < 300) && (receive_byte()!= start_byte)){};
-    if (receive_byte() != start_byte){
+    uint8_t out_data = output_data_buffer[(output_buffer_counter-1)%buffer_len]; 
+    uint8_t temp_1 = prev_out_byte;
+    
+    if (error_counter == 0){
       start_byte = receive_byte();
       prev_out_byte = ~start_byte;
-      int_error_val = 2;
-      data_sent = 1;
-      /*if (error_counter ==0){
-        send_data();
-        error_counter = 1;
-      }*/ 
-    }   
-    else{
-      data_sent = 1;
-      int_error_val = 0;
-      error_counter = 0;
-      output_buffer_counter--;
+      check_byte = prev_out_byte; 
+      uint8_t temp_2 = temp_1 & start_byte;
+      if ((receive_byte() != temp_2) || start_byte == 0){
+        send_byte(start_byte);
+        out_data = 0;
+        delayMicroseconds(100);
+        error_counter = 1; 
+      }
+      else if (receive_byte() == temp_2){
+        send_byte(out_data);
+        prev_out_byte = out_data;
+        start_byte = ~prev_out_byte;
+        check_byte = prev_out_byte; 
+        output_buffer_counter = 0;
+        ext_error_val = 1;   
+      }
     }
+    else{
+      send_byte(out_data);                              // could also set predetermined value on lost connection (zero)
+      prev_out_byte = out_data;
+      start_byte = ~prev_out_byte;
+      check_byte = prev_out_byte; 
+      output_buffer_counter = 0;
+      ext_error_val = 1;
+    }
+    
+    if (ext_error_val == 0){
+      double temp = micros();   
+      while ((micros() - temp < 100) && is_first_write == 1){};
+    
+      temp = micros();  
+      
+      while ((micros() - temp < 300) && receive_byte() != prev_out_byte){}
+    
+      if (receive_byte() == prev_out_byte){
+        send_byte(out_data); 
+        prev_out_byte = out_data;
+        start_byte = ~prev_out_byte;
+        check_byte = prev_out_byte; 
+        temp = micros();
+        while((micros() - temp < 300) && (receive_byte()!= start_byte)){};
+           
+        if (receive_byte() == start_byte){
+          data_sent = 1;
+          is_first_write = 0;
+          ext_error_val = 0;
+          int_error_val = 0;
+          error_counter = 0;
+          output_buffer_counter--;
+        }
+        else{
+          ext_error_val = 2; 
+        }
+      }
+      else{
+        ext_error_val = 3;
+      }
+    }
+    is_first_write = 0;
   }
-  else{
-    start_byte = receive_byte();
-    prev_out_byte = ~start_byte;
-    int_error_val = 1;
-    if (error_counter == 0){
-      send_data();
-      error_counter == 1;
-    }   
-  } 
-  }
-  if(data_sent == 0){
+  if(ext_error_val == 0 && data_sent == 0){
     int_error_val = 3;
-    ext_error_val = 1;
-    output_buffer_counter = 0;    
-    send_byte(prev_out_byte);    
+    ext_error_val = 4;
+    output_buffer_counter = 0;        
   }
 }
 
 void write_data(uint8_t data_out){
   int_error_val = 0; 
-  ext_error_val = 1;
+  ext_error_val = 0;
+  error_counter = 0;
   data_sent = 0;
   if (output_buffer_counter == 0){
     t_output = micros();
@@ -145,19 +171,20 @@ uint8_t receive_byte(void){
   t_start = micros();
   
   send_byte(prev_in_byte);  
-  while (ack_byte == check_byte && micros() - t_start < 100){
+  while (ack_byte == check_byte && micros() - t_start < 600){
     ack_byte = receive_byte();
   }
 
-  delayMicroseconds(50);  
+  delayMicroseconds(200);  
   
   input_data_buffer[input_buffer_counter%buffer_len] = receive_byte();
 
   check_byte = ~receive_byte();
   send_byte(check_byte);
-  start_byte = prev_in_byte;
   prev_in_byte = receive_byte();
- 
+  start_byte = prev_in_byte; 
+  prev_out_byte = check_byte;
+  
   input_buffer_counter ++;
   return;
 }
