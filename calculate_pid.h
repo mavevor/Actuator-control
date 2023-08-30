@@ -19,9 +19,9 @@ float i_error[3] = {0};
 float d_error[3] = {0};
 float p_error_prev[3] = {0};
 
-float K_p = 0.00002;
-float K_i = 0.0000002;
-float K_d = 0.02;
+float K_p[3] = {0};
+float K_i[3] = {0};
+float K_d[3] = {0};
 
 int dist[3] = {0};
 
@@ -39,7 +39,7 @@ void measure_force(void){
   av_force[1] = 0;
   av_force[2] = 0;
   force_counter = 0;
-  force_data_out = 32;
+  force_data_out = 32;                      // shifted left twice to give 0b10000000
 
   while ((micros() - loop_timer < cycle_time)){
     if (force_counter < force_buffer_len){
@@ -70,7 +70,7 @@ void measure_force(void){
   loop_timer = micros();
 }
 
-void calculate_pid(void){
+void calculate_pid(void){                                                                   // cycle time is constant.
 
   for (int i = 0 ; i < 3; i++){
     if (PID_ON_STATE[i] == 1){
@@ -79,10 +79,10 @@ void calculate_pid(void){
       d_error[i] = p_error[i] - p_error_prev[i];
       p_error_prev[i] = p_error[i];
 
-      if (K_i * i_error[i] > max_dist[i]){i_error[i] = max_dist[i] / K_i;}
-      if (K_i * i_error[i] < min_dist[i]){i_error[i] = min_dist[i] / K_i;}
+      if (K_i[i] * i_error[i] > max_dist[i] && K_i != 0){i_error[i] = max_dist[i] / K_i[i];}      
+      if (K_i[i] * i_error[i] < min_dist[i] && K_i != 0){i_error[i] = min_dist[i] / K_i[i];}
 
-      dist[i] = K_p * p_error[i] + K_i * i_error[i] + K_d * d_error[i];
+      dist[i] = K_p[i] * p_error[i] + K_i[i] * i_error[i] + K_d[i] * d_error[i];
 
       if (dist[i] > max_dist[i]){dist[i] = max_dist[i];}
       if (dist[i] < max_dist[i]){dist[i] = max_dist[i];}
