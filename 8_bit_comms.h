@@ -3,7 +3,7 @@
 #include <mbed.h>
 
 uint8_t outputs_8_bit[8] = {0,1,2,3,4,5,6,7};           //MSB to LSB
-uint8_t inputs_8_bit[8] = {16,17,18,19,20,21,22,26};    // MSB to LSB
+uint8_t inputs_8_bit[8] = {14,15,16,17,18,19,20,21};    // MSB to LSB
 
 mbed::Ticker timer1;
 
@@ -83,13 +83,13 @@ void send_data(void){
         error_counter = 1; 
       }
       else if (receive_byte() == temp_2){
-        out_data = 0;
+        /*out_data = 0;
         send_byte(out_data);
         prev_out_byte = out_data;
         start_byte = ~prev_out_byte;
         check_byte = prev_out_byte; 
         output_buffer_counter = 0;
-        ext_error_val = 1;   
+        ext_error_val = 1;*/   
       }
     }
     else{
@@ -191,26 +191,26 @@ uint8_t receive_byte(void){
 }
 
 uint8_t read_data(void){                          //FIFO buffer
-  uint8_t temp_1 = 0;
-  uint8_t temp_2 = 0;
+  uint8_t temp_3 = 0;
+  uint8_t temp_4 = 0;
+  if (input_buffer_counter == 0){
+    int_error_val = 5;
+  }
   if (input_buffer_counter > 0){
     if (input_buffer_counter > 10){
-      temp_1 = (input_buffer_counter+1)%buffer_len;   
+      temp_3 = (input_buffer_counter+1)%buffer_len;   
     }
     
-    temp_2 = input_data_buffer[temp_1];
+    temp_4 = input_data_buffer[temp_3];
     
     for (int i = 0; i < buffer_len; i++){
-      input_data_buffer[(i+temp_1)%buffer_len] = input_data_buffer[(i+temp_1+1)%buffer_len];
+      input_data_buffer[(i+temp_3)%buffer_len] = input_data_buffer[(i+temp_3+1)%buffer_len];
     }
     
     input_buffer_counter--;
     
-    return temp_2;
-  }
-  else{
-    int_error_val = 5;
-  }
+    return temp_4;
+  }  
 }
 
 //Interrupt Service Routine
