@@ -1,11 +1,7 @@
 //Half Duplex 8-bit communication
 
-#include <mbed.h>
-
 uint8_t outputs_8_bit[8] = {0,1,2,3,4,5,6,7};           //MSB to LSB
 uint8_t inputs_8_bit[8] = {14,15,16,17,18,19,20,21};    // MSB to LSB
-
-mbed::Ticker timer1;
 
 uint8_t check_byte = 0;
 uint8_t ack_byte = 0;
@@ -24,6 +20,9 @@ uint8_t prev_in_byte = 0;
 double t_start = 0;
 double t_output = 0;
 
+double t_1 = 0;
+double t_2 = 0;
+
 bool is_first_write = 1;
 
 uint8_t data_sent = 0;
@@ -32,6 +31,7 @@ uint8_t int_error_val = 0;
 uint8_t ext_error_val = 0;
 uint8_t error_counter = 0;
 
+static struct repeating_timer timer;
 
 //Function Declarations
 
@@ -41,7 +41,7 @@ void write_data(uint8_t data_out);
 uint8_t receive_byte(void);
 void receive_data(void);
 uint8_t read_data(void);
-void send_receive_ack(void);
+bool send_receive_ack(struct repeating_timer *t);
 
 //Setup
 
@@ -52,8 +52,8 @@ void setup_comms(void){
   }
   prev_in_byte = receive_byte(); 
   check_byte = ~prev_in_byte;
-  send_byte(check_byte); 
-  timer1.attach_us(&send_receive_ack, 100);
+  send_byte(check_byte);  
+  add_repeating_timer_us(100, send_receive_ack, NULL, &timer);
 }
 
 //Write Functions
@@ -79,7 +79,8 @@ void send_data(void){
       uint8_t temp_2 = temp_1 & start_byte;
       if ((receive_byte() != temp_2) || start_byte == 0){
         send_byte(start_byte);
-        delayMicroseconds(100);
+        double t_temp = micros();
+        while (micros() - t_temp < 100);
         error_counter = 1; 
       }
       else if (receive_byte() == temp_2){
@@ -172,11 +173,12 @@ uint8_t receive_byte(void){
   t_start = micros();
   
   send_byte(prev_in_byte);  
-  while (ack_byte == check_byte && micros() - t_start < 600){
+  while (ack_byte == check_byte && micros() - t_start < 300){
     ack_byte = receive_byte();
   }
 
-  delayMicroseconds(200);  
+  double t_temp = micros();
+  while (micros() - t_temp < 200); 
   
   input_data_buffer[input_buffer_counter%buffer_len] = receive_byte();
 
@@ -191,45 +193,42 @@ uint8_t receive_byte(void){
 }
 
 uint8_t read_data(void){                          //FIFO buffer
-  uint8_t temp_3 = 0;
-  uint8_t temp_4 = 0;
-  if (input_buffer_counter == 0){
-    int_error_val = 5;
-  }
+  uint8_t temp_1 = 0;
+  uint8_t temp_2 = 0;
   if (input_buffer_counter > 0){
     if (input_buffer_counter > 10){
-      temp_3 = (input_buffer_counter+1)%buffer_len;   
+      temp_1 = (input_buffer_counter+1)%buffer_len;   
     }
     
-    temp_4 = input_data_buffer[temp_3];
+    temp_2 = input_data_buffer[temp_1];
     
     for (int i = 0; i < buffer_len; i++){
-      input_data_buffer[(i+temp_3)%buffer_len] = input_data_buffer[(i+temp_3+1)%buffer_len];
+      input_data_buffer[(i+temp_1)%buffer_len] = input_data_buffer[(i+temp_1+1)%buffer_len];
     }
     
     input_buffer_counter--;
     
-    return temp_4;
-  }  
+    
+  }
+  return temp_2;
 }
 
 //Interrupt Service Routine
 
-
-void send_receive_ack(void){
+bool send_receive_ack(struct repeating_timer *t){
+  
   if (int_error_val == 0){
-
+    //cancel_repeating_timer (&timer);
     if (output_buffer_counter >0){
-      timer1.detach();
       send_data();
       prev_in_byte = receive_byte();
-      timer1.attach_us(&send_receive_ack, 100);   
     }
     else if((receive_byte() == check_byte)){
-      timer1.detach();
+      t_2 = micros() - t_1;
       receive_data();
-      //start_byte = receive_byte();
-      timer1.attach_us(&send_receive_ack, 100);
     }
+  //add_repeating_timer_us(-100, send_receive_ack, NULL, &timer);  
   }
+  t_1 = micros();
+  return true;
 }
