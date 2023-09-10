@@ -1,231 +1,246 @@
-//Half Duplex 8-bit communication
+#include "8_bit_comms.h"
+#include "hardware/watchdog.h"
 
-uint8_t outputs_8_bit[8] = {0,1,2,3,5,6,7,8};           //MSB to LSB
-uint8_t inputs_8_bit[8] = {14,15,16,17,18,19,21,22};    // MSB to LSB
+#define MASTER_RESET_KEY 1
+#define SLAVE_RESET_KEY 0
 
-uint8_t check_byte = 0;
-uint8_t ack_byte = 0;
-uint8_t start_byte = 0;
+uint8_t KEY_LIST[3] = {1, 2, 3};
+uint8_t ON_STATE[3] = {0};
+uint8_t dist[3] = {0};
+uint8_t PID_KEY_LIST[2] = {254, 255};
+uint8_t PID_STATE[3] = {0};
+bool PID_ON_STATE[3] = {0};
+uint8_t ACTIVE_STATE[3] = {0};
 
-const uint8_t buffer_len = 10;
-uint8_t input_data_buffer[buffer_len] = {0};
-uint8_t output_data_buffer[buffer_len] = {0};
+uint8_t in_byte = 0;
+uint8_t out_byte = 0;
 
-int input_buffer_counter = 0;
-int output_buffer_counter = 0;
+bool force_feedback_data[3] = {0};
 
-uint8_t prev_out_byte = 0;
-uint8_t prev_in_byte = 0;
+int key_index = -1;
+int state_index = -1;
+int pid_state_index = -1;
+int pid_key_index = -1;
+int active_state_index = -1;
+bool pid_ack = 0;
+bool key_ack = 0;
+bool dist_ack = 0;
+bool program_counter = 1;
 
-uint32_t t_start = 0;
-uint32_t t_output = 0;
+bool key_sent = 0;
 
-bool is_first_write = 1;
+uint32_t timer_1;
+uint32_t timer_2;
+uint32_t timer_3;
 
-uint8_t data_sent = 0;
+int counter_1;
 
-uint8_t error_val = 0;
-uint8_t error_counter = 0;
+String ready_statement[3] = {"Actuator 1 ready! ", "Actuator 2 ready! ", "Actuator 3 ready! "};
+String dist_statement[3] = {"Actuator 1 distance: ", "Actuator 2 distance: ", "Actuator 3 distance: "};
+String pid_enable_statement[2] = {". PID disabled.", ". PID enabled."};
+String invalid_key_statement = "Invalid Actuator ID! Try again: ";
+String invalid_pid_key_statement = "Invalid PID Enable ID! Try again: ";
+String key_statement = "Input valid Actuator ID";
+String dist_input_statement = "Input distance: ";
+String pid_input_statement = "Input PID Enable ID";
 
-//Function Declarations
-
-void send_byte(uint8_t data_out);
-void send_data(void);
-void write_data(uint8_t data_out);
-uint8_t receive_byte(void);
-void receive_data(void);
-uint8_t read_data(void);
-bool send_receive_ack(struct repeating_timer *t);
-
-//Setup
-
-void setup_comms(void){
-  for (int i = 0; i < 8; i++){
-    pinMode(outputs_8_bit[i], OUTPUT);
-    pinMode(inputs_8_bit[i], INPUT_PULLUP);
+int index(uint8_t arr[], uint8_t c, int len = 3) {
+  for (int i = 0; i < len; ++i)
+  {
+    if (arr[i] == c) return i;
   }
-  prev_in_byte = receive_byte(); 
-  check_byte = ~prev_in_byte;
-  send_byte(check_byte);  
-  static struct repeating_timer timer;
-  add_repeating_timer_us(100, send_receive_ack, NULL, &timer);
+  return -1;
 }
 
-//Write Functions
-
-void send_byte(uint8_t data_out){
-  for (int i = 7; i >= 0; i--){
-    digitalWrite(outputs_8_bit[i], !(data_out & 0b00000001));
-    data_out = data_out >> 1;   
-  }
-  return;
+void setup() {
+  Serial.begin(57600);
+  Serial.setTimeout(0.5);
+  setup_comms();
+  write_data(SLAVE_RESET_KEY);
+  watchdog_enable(100, 1);
 }
 
-void send_data(void){
+void loop() {
+  if (Serial.available() > 0) {
+    out_byte = Serial.parseInt();
 
-  while(( micros() - t_output < 5000) && data_sent == 0){
-    uint8_t out_data = output_data_buffer[(output_buffer_counter-1)%buffer_len]; 
-    uint8_t temp_1 = prev_out_byte;
-    
-    if (error_counter == 1){
-      out_data = 0;
-      send_byte(out_data);                              // could also set predetermined value on lost connection (zero)
-      prev_out_byte = out_data;
-      start_byte = ~prev_out_byte;
-      check_byte = prev_out_byte; 
-      output_buffer_counter = 0;
-      error_val = 1;
+    state_index = index(ON_STATE, 1, 3);
+    key_index = index(KEY_LIST, out_byte);
+    pid_state_index = index(PID_STATE, 1, 3);
+    pid_key_index = index(PID_KEY_LIST, out_byte, 2);
+
+    if (out_byte == SLAVE_RESET_KEY) {
+      write_data(SLAVE_RESET_KEY);
+      for (int i = 0; i < 3; i++) {
+        ACTIVE_STATE[i] = 0;
+        ON_STATE[i] = 0;
+        PID_STATE[i] = 0;
+        PID_ON_STATE[i] = 0;
+        dist[i] = 0;
+      }
+      dist_ack = 0;
+      program_counter = 1;
+      key_sent = 0;
+
+      Serial.print('\n');
+      Serial.println(" Slave Device Resetting...");
+      timer_3 = micros();
     }
-    if (error_counter == 0){
-      start_byte = receive_byte();
-      prev_out_byte = ~start_byte;
-      check_byte = prev_out_byte; 
-      uint8_t temp_2 = temp_1 & start_byte;
-      if ((receive_byte() != temp_2) || start_byte == 0){
-        send_byte(start_byte);
-        uint32_t t_temp = micros();
-        while (micros() - t_temp < 100);
-        error_counter = 1; 
-      }
-      else if (receive_byte() == temp_2){
-        out_data = 0;
-        send_byte(out_data);
-        prev_out_byte = out_data;
-        start_byte = ~prev_out_byte;
-        check_byte = prev_out_byte; 
-        output_buffer_counter = 0;
-        error_val = 4;   
-      }
+    else if (state_index + 1) {
+      write_data(out_byte);
+      key_sent = 1;
+    }
+    else if (key_index + 1 && !dist_ack) {
+      write_data(out_byte);
+      key_sent = 1;
+    }
+    else if ((pid_key_index + 1) && dist_ack) {
+      write_data(out_byte);
+      key_sent = 1;
+    }
+    else if (key_sent == 0 && !dist_ack) {
+      Serial.println(invalid_key_statement);
+    }
+    else if (key_sent == 0 && dist_ack) {
+      Serial.println(invalid_pid_key_statement);
     }
 
-    
-    if (error_val == 0){
-      uint32_t temp = micros();   
-      while ((micros() - temp < 100) && is_first_write == 1){};
-    
-      temp = micros();  
+    if (key_sent == 1) {
+      program_counter = 0;
+      uint32_t t_temp = micros();
+      while (micros() - t_temp < 1000);
+      timer_2 = micros();
+      timer_3 = micros();
+    }
+  }
+
+  if (error_val != 0) {
+    if (program_counter || key_sent == 1) {
+      Serial.print('\n');
+      Serial.println("Check connection and try again.");
+      Serial.print("Error Value: ");
+      Serial.println(error_val);
+      key_sent = 0;
+      program_counter = 0;
+
+    }
+    dist_ack = 0;
+    for (int i = 0; i < 3; i++) {
+      ACTIVE_STATE[i] = 0;
+      ON_STATE[i] = 0;
+      PID_STATE[i] = 0;
+      PID_ON_STATE[i] = 0;
+      dist[i] = 0;
+    }
+    write_data(SLAVE_RESET_KEY);
+    uint32_t t_temp = micros();
+    while (micros() - t_temp < 1000);
+  }
+
+  if (input_buffer_counter == 0 && key_sent == 1 && out_byte != SLAVE_RESET_KEY) {
+
+    if ((micros() - timer_2) > 15000) {
+      error_val = 5;
+      dist_ack = 0;
+      key_sent = 0;
+      Serial.print('\n');
+      Serial.println("Timeout Error! Try again!");
+    }
+  }
+
+  while (input_buffer_counter > 1) {
+    uint8_t temp = read_data();
+  }
+  if (input_buffer_counter == 1 && key_sent == 0) {
+    in_byte = read_data();
+
+    if (in_byte >= 128 && in_byte <= 135) {
+      uint32_t temp_3 = micros() - timer_3;
+      if (temp_3 < 200000) {
+
+        for (int i = 0; i < 3; i++) {
+          force_feedback_data[(2 - i)] = (in_byte >> i) & 0x01;
+        }
+        for (int i = 0; i < 3; i++) {
+          if (ACTIVE_STATE[i] != 0) {
+            Serial.print("Force Sensor ");
+            Serial.print(i + 1);
+            if (force_feedback_data[i] == 1) {
+              Serial.println(" reached threshold.");
+            }
+            if (force_feedback_data[i] == 0) {
+              Serial.println(" yet to reach threshold.");
+            }
+          }
+        }
+      }
+      timer_3 = micros();
+    }
+    if (in_byte == MASTER_RESET_KEY && (program_counter || key_sent == 1)){
+      Serial.println("Master Device Resetting...");
+      error_val = 6;
+      dist_ack = 0;
+      key_sent = 0;
+      program_counter = 0;
       
-      while ((micros() - temp < 300) && receive_byte() != prev_out_byte){}
-    
-      if (receive_byte() == prev_out_byte){
-        send_byte(out_data); 
-        prev_out_byte = out_data;
-        start_byte = ~prev_out_byte;
-        check_byte = prev_out_byte; 
-        temp = micros();
-        while((micros() - temp < 300) && (receive_byte()!= start_byte)){};
-           
-        if (receive_byte() == start_byte){
-          data_sent = 1;
-          is_first_write = 0;
-          error_val = 0;
-          error_counter = 0;
-          output_buffer_counter--;
-        }
-        else{
-          error_val = 2; 
-        }
+    }
+  }
+
+  if (((micros() - timer_3) > 5000000) && (program_counter || key_sent == 1)) {
+    error_val = 7;
+    dist_ack = 0;
+    key_sent = 0;
+  }
+
+  if (input_buffer_counter == 1 && key_sent == 1 && error_val == 0) {
+    key_sent = 0;
+    program_counter = 0;
+    in_byte = read_data();
+    key_index = index(KEY_LIST, (in_byte + 1) % 256);
+    key_ack = (out_byte % 256 == (in_byte + 1) % 256);
+    dist_ack = (out_byte % 256 == (in_byte + 255) % 256);
+    state_index = index(ON_STATE, 1, 3);
+    pid_state_index = index(PID_STATE, 1, 3);
+    pid_key_index = index(PID_KEY_LIST, in_byte, 2);
+    pid_ack = out_byte == in_byte;
+
+    if ((key_index + 1) && key_ack && !(state_index + 1)) {
+      program_counter = 1;
+      ON_STATE[key_index] = 1;
+      PID_STATE[key_index] = 0;
+      Serial.print(ready_statement[key_index]);
+      Serial.print(dist_input_statement);
+    }
+    else if (dist_ack  && (state_index + 1) && !(pid_state_index + 1)) {
+      program_counter = 1;
+      ON_STATE[state_index] = 0;
+      PID_STATE[state_index] = 1;
+      dist[state_index] = out_byte;
+      Serial.println(out_byte);
+      Serial.println(pid_input_statement);
+    }
+    else if (pid_ack && (pid_key_index + 1) && (pid_state_index + 1)) {
+      program_counter = 1;
+      PID_STATE[pid_state_index] = 0;
+      PID_ON_STATE[pid_state_index] = pid_key_index;
+      ACTIVE_STATE[pid_state_index] = 1;
+      for (int i = 0; i < 3; i++) {
+        Serial.print(dist_statement[i]);
+        Serial.print(dist[i]);
+        Serial.println(pid_enable_statement[PID_ON_STATE[i]]);
       }
-      else{
-        error_val = 3;
+      uint32_t t_temp = micros();
+      while (micros() - t_temp < 1000000){
+        watchdog_update();
       }
+
+      Serial.println(key_statement);
     }
-    is_first_write = 0;
-  }
-  if(error_val == 0 && data_sent == 0){
-    error_val = 4;
-    output_buffer_counter = 0;        
-  }
-}
-
-void write_data(uint8_t data_out){
-  error_val = 0;
-  error_counter = 0;
-  data_sent = 0;
-  if (output_buffer_counter == 0){
-    t_output = micros();
-  }
-  output_data_buffer[(output_buffer_counter)%buffer_len] = data_out;
-  output_buffer_counter ++;
-}
-
-//Read Functions
-
-uint8_t receive_byte(void){
-  uint8_t data = 0;
-  for (int i = 0; i < 8; i++){
-     data = data << 1;
-     data += !digitalRead(inputs_8_bit[i]);
-  }
-  return data;
-}
-
- void receive_data(void){
-
-  ack_byte = receive_byte();
-  t_start = micros();
-  
-  send_byte(prev_in_byte);  
-  while (ack_byte == check_byte && micros() - t_start < 300){
-    ack_byte = receive_byte();
-  }
-
-  uint32_t t_temp = micros();
-  while (micros() - t_temp < 200); 
-  
-  input_data_buffer[input_buffer_counter%buffer_len] = receive_byte();
-
-  check_byte = ~receive_byte();
-  send_byte(check_byte);
-  prev_in_byte = receive_byte();
-  start_byte = prev_in_byte; 
-  prev_out_byte = check_byte;
-  
-  input_buffer_counter ++;
-  return;
-}
-
-uint8_t read_data(void){                          //FIFO buffer
-  uint8_t temp_3 = 0;
-  uint8_t temp_4 = 0;
-  if (input_buffer_counter > 0){
-    if (input_buffer_counter > 10){
-      temp_3 = (input_buffer_counter+1)%buffer_len;   
+    else if (program_counter == 0) {
+      program_counter = 1;
+      Serial.println("Try again!");
     }
-    
-    temp_4 = input_data_buffer[temp_3];
-    
-    for (int i = 0; i < buffer_len; i++){
-      input_data_buffer[(i+temp_3)%buffer_len] = input_data_buffer[(i+temp_3+1)%buffer_len];
-    }
-    
-    input_buffer_counter--;
-
-  } 
-  return temp_4;
-}
-
-//Interrupt Service Routine
-
-bool send_receive_ack(struct repeating_timer *t){
-  
-  //cancel_repeating_timer (&timer);
-  if (error_val == 0){
-    if (output_buffer_counter >0){
-      send_data();
-      prev_in_byte = receive_byte();
-    }
-    else if((receive_byte() == check_byte)){
-      receive_data();
-    }
-  }      
-  if (error_val != 0){
-      check_byte = ~receive_byte();
-      send_byte(check_byte);
-      prev_in_byte = receive_byte();
-      start_byte = prev_in_byte; 
-      prev_out_byte = check_byte;
-    }  
-  //add_repeating_timer_us(-100, send_receive_ack, NULL, &timer);  
-  return true;
+    timer_3 = micros();
+  }
+  watchdog_update();
 }
