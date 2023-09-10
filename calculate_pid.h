@@ -109,15 +109,4 @@ void calculate_pid(void) {                                                      
     }
     analogWrite(ACTUATOR[i], corrected_dist[i]);
   }
-  Serial.print(av_force[0]);
-  Serial.print("  ");
-  Serial.print(corrected_dist[0]);
-  Serial.print("   ");
-  Serial.print(av_force[1]);
-  Serial.print("  ");
-  Serial.print(corrected_dist[1]);
-  Serial.print("   ");
-  Serial.print(av_force[2]);
-  Serial.print("  ");
-  Serial.println(corrected_dist[2]);
 }
