@@ -28,6 +28,7 @@ bool dist_ack = 0;
 bool program_counter = 1;
 
 bool key_sent = 0;
+bool is_active[3] = {0};
 
 uint32_t timer_1;
 uint32_t timer_2;
@@ -44,7 +45,7 @@ String key_statement = "Input valid Actuator ID";
 String dist_input_statement = "Input distance: ";
 String pid_input_statement = "Input PID Enable ID";
 
-int index(uint8_t arr[], uint8_t c, int len = 3) {
+int index(uint8_t arr[], uint8_t c, int len = 3) {                                            //check if value in array and return array index if in array; -1 if not
   for (int i = 0; i < len; ++i)
   {
     if (arr[i] == c) return i;
@@ -54,17 +55,17 @@ int index(uint8_t arr[], uint8_t c, int len = 3) {
 
 void setup() {
   Serial.begin(57600);
-  Serial.setTimeout(0.5);
+  Serial.setTimeout(0.5);                                                                      //Speed up parseInt
   setup_comms();
   write_data(SLAVE_RESET_KEY);
-  watchdog_enable(100, 1);
+  watchdog_enable(100, 1);                                                                      //100ms watchdog timer
 }
 
 void loop() {
   if (Serial.available() > 0) {
     out_byte = Serial.parseInt();
 
-    state_index = index(ON_STATE, 1, 3);
+    state_index = index(ON_STATE, 1, 3);                                                        //update indicies
     key_index = index(KEY_LIST, out_byte);
     pid_state_index = index(PID_STATE, 1, 3);
     pid_key_index = index(PID_KEY_LIST, out_byte, 2);
@@ -86,22 +87,22 @@ void loop() {
       Serial.println(" Slave Device Resetting...");
       timer_3 = micros();
     }
-    else if (state_index + 1) {
+    else if (state_index + 1) {                                                                 //Send distance data
       write_data(out_byte);
       key_sent = 1;
     }
-    else if (key_index + 1 && !dist_ack) {
+    else if (key_index + 1 && !dist_ack) {                                                      //Send actuator key value
       write_data(out_byte);
       key_sent = 1;
     }
-    else if ((pid_key_index + 1) && dist_ack) {
+    else if ((pid_key_index + 1) && dist_ack) {                                                 //Send PID enable
       write_data(out_byte);
       key_sent = 1;
     }
-    else if (key_sent == 0 && !dist_ack) {
+    else if (key_sent == 0 && !dist_ack) {                                                      //Incorrect actuator key
       Serial.println(invalid_key_statement);
     }
-    else if (key_sent == 0 && dist_ack) {
+    else if (key_sent == 0 && dist_ack) {                                                       //Incorrect PID enable value
       Serial.println(invalid_pid_key_statement);
     }
 
@@ -122,7 +123,6 @@ void loop() {
       Serial.println(error_val);
       key_sent = 0;
       program_counter = 0;
-
     }
     dist_ack = 0;
     for (int i = 0; i < 3; i++) {
@@ -159,16 +159,20 @@ void loop() {
       if (temp_3 < 200000) {
 
         for (int i = 0; i < 3; i++) {
-          force_feedback_data[(2 - i)] = (in_byte >> i) & 0x01;
+          force_feedback_data[(2 - i)] = (in_byte >> i) & 0x01;                                 //Decode force data
         }
         for (int i = 0; i < 3; i++) {
           if (ACTIVE_STATE[i] != 0) {
-            Serial.print("Force Sensor ");
-            Serial.print(i + 1);
-            if (force_feedback_data[i] == 1) {
+            if (force_feedback_data[i] == 1 && is_active[i]) {
+              is_active[i] = 0;
+              Serial.print("Force Sensor ");
+              Serial.print(i + 1);
               Serial.println(" reached threshold.");
             }
-            if (force_feedback_data[i] == 0) {
+            if (force_feedback_data[i] == 0 && !is_active[i]) {
+              is_active[i] = 1;
+              Serial.print("Force Sensor ");
+              Serial.print(i + 1);
               Serial.println(" yet to reach threshold.");
             }
           }
@@ -176,13 +180,13 @@ void loop() {
       }
       timer_3 = micros();
     }
-    if (in_byte == MASTER_RESET_KEY && (program_counter || key_sent == 1)){
+    if (in_byte == MASTER_RESET_KEY && (program_counter || key_sent == 1)) {
       Serial.println("Master Device Resetting...");
       error_val = 6;
       dist_ack = 0;
       key_sent = 0;
       program_counter = 0;
-      
+
     }
   }
 
@@ -208,6 +212,7 @@ void loop() {
       program_counter = 1;
       ON_STATE[key_index] = 1;
       PID_STATE[key_index] = 0;
+      ACTIVE_STATE[key_index] = 0;
       Serial.print(ready_statement[key_index]);
       Serial.print(dist_input_statement);
     }
@@ -224,17 +229,23 @@ void loop() {
       PID_STATE[pid_state_index] = 0;
       PID_ON_STATE[pid_state_index] = pid_key_index;
       ACTIVE_STATE[pid_state_index] = 1;
+      is_active[pid_state_index] = 1;
+
       for (int i = 0; i < 3; i++) {
         Serial.print(dist_statement[i]);
         Serial.print(dist[i]);
         Serial.println(pid_enable_statement[PID_ON_STATE[i]]);
       }
       uint32_t t_temp = micros();
-      while (micros() - t_temp < 1000000){
+      while (micros() - t_temp < 1000000) {
         watchdog_update();
       }
 
       Serial.println(key_statement);
+
+      Serial.print("Force Sensor ");
+      Serial.print(pid_state_index + 1);
+      Serial.println(" yet to reach threshold.");
     }
     else if (program_counter == 0) {
       program_counter = 1;
