@@ -1,7 +1,7 @@
 //Half Duplex 8-bit communication
 
-uint8_t outputs_8_bit[8] = {0,1,2,3,5,6,7,8};           //MSB to LSB
-uint8_t inputs_8_bit[8] = {14,15,16,17,18,19,21,22};    // MSB to LSB
+uint8_t outputs_8_bit[8] = {0, 1, 2, 3, 5, 6, 7, 8};    //MSB to LSB
+uint8_t inputs_8_bit[8] = {14, 15, 16, 17, 18, 19, 21, 22}; // MSB to LSB
 
 uint8_t check_byte = 0;
 uint8_t ack_byte = 0;
@@ -39,193 +39,191 @@ bool send_receive_ack(struct repeating_timer *t);
 
 //Setup
 
-void setup_comms(void){
-  for (int i = 0; i < 8; i++){
+void setup_comms(void) {
+  for (int i = 0; i < 8; i++) {
     pinMode(outputs_8_bit[i], OUTPUT);
-    pinMode(inputs_8_bit[i], INPUT_PULLUP);
+    pinMode(inputs_8_bit[i], INPUT_PULLUP);                                                                 //Don't leave inputs floating
   }
-  prev_in_byte = receive_byte(); 
+  prev_in_byte = receive_byte();
   check_byte = ~prev_in_byte;
-  send_byte(check_byte);  
+  send_byte(check_byte);
   static struct repeating_timer timer;
   add_repeating_timer_us(100, send_receive_ack, NULL, &timer);
 }
 
 //Write Functions
 
-void send_byte(uint8_t data_out){
-  for (int i = 7; i >= 0; i--){
-    digitalWrite(outputs_8_bit[i], !(data_out & 0b00000001));
-    data_out = data_out >> 1;   
+void send_byte(uint8_t data_out) {
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(outputs_8_bit[i], !(data_out & 0b00000001));                                               //Bits flipped as INPUT_PULLUP (better for error detection)
+    data_out = data_out >> 1;
   }
   return;
 }
 
-void send_data(void){
+void send_data(void) {
 
-  while(( micros() - t_output < 5000) && data_sent == 0){
-    uint8_t out_data = output_data_buffer[(output_buffer_counter-1)%buffer_len]; 
+  while (( micros() - t_output < 5000) && data_sent == 0) {
+    uint8_t out_data = output_data_buffer[(output_buffer_counter - 1) % buffer_len];
     uint8_t temp_1 = prev_out_byte;
-    
-    if (error_counter == 1){
+
+    if (error_counter == 1) {                                                                               //If data not sent on first pass
       out_data = 0;
-      send_byte(out_data);                              // could also set predetermined value on lost connection (zero)
+      send_byte(out_data);                                                                                  //Send 0
       prev_out_byte = out_data;
       start_byte = ~prev_out_byte;
-      check_byte = prev_out_byte; 
+      check_byte = prev_out_byte;
       output_buffer_counter = 0;
       error_val = 1;
     }
-    if (error_counter == 0){
+    if (error_counter == 0) {                                                                               //normal operation
       start_byte = receive_byte();
       prev_out_byte = ~start_byte;
-      check_byte = prev_out_byte; 
+      check_byte = prev_out_byte;
       uint8_t temp_2 = temp_1 & start_byte;
-      if ((receive_byte() != temp_2) || start_byte == 0){
-        send_byte(start_byte);
+      if ((receive_byte() != temp_2) || start_byte == 0) {                                                  //detect if receiving device is expecting data
+        send_byte(start_byte);                                                                              //send handshake
         uint32_t t_temp = micros();
         while (micros() - t_temp < 100);
-        error_counter = 1; 
+        error_counter = 1;
       }
-      else if (receive_byte() == temp_2){
-        out_data = 0;
+      else if (receive_byte() == temp_2) {                                                                  //if receiving device is expecting data
+        out_data = 0;                                                                                       //send 0
         send_byte(out_data);
         prev_out_byte = out_data;
         start_byte = ~prev_out_byte;
-        check_byte = prev_out_byte; 
+        check_byte = prev_out_byte;
         output_buffer_counter = 0;
-        error_val = 4;   
+        error_val = 4;
       }
     }
 
-    
-    if (error_val == 0){
-      uint32_t temp = micros();   
-      while ((micros() - temp < 100) && is_first_write == 1){};
-    
-      temp = micros();  
-      
-      while ((micros() - temp < 300) && receive_byte() != prev_out_byte){}
-    
-      if (receive_byte() == prev_out_byte){
-        send_byte(out_data); 
+
+    if (error_val == 0) {
+      uint32_t temp = micros();
+      while ((micros() - temp < 100) && is_first_write == 1) {};                                            //wait extra time for first write operation after reset
+
+      temp = micros();
+
+      while ((micros() - temp < 300) && receive_byte() != prev_out_byte) {}                                 //wait for handshake acknowledgement
+
+      if (receive_byte() == prev_out_byte) {
+        send_byte(out_data);                                                                                //send new data
         prev_out_byte = out_data;
         start_byte = ~prev_out_byte;
-        check_byte = prev_out_byte; 
+        check_byte = prev_out_byte;
         temp = micros();
-        while((micros() - temp < 300) && (receive_byte()!= start_byte)){};
-           
-        if (receive_byte() == start_byte){
+        while ((micros() - temp < 300) && (receive_byte() != start_byte)) {};                               //wait for data acknowledgement
+
+        if (receive_byte() == start_byte) {
           data_sent = 1;
           is_first_write = 0;
           error_val = 0;
           error_counter = 0;
-          output_buffer_counter--;
+          output_buffer_counter--;                                                                          //if data sent decrement buffer counter
         }
-        else{
-          error_val = 2; 
+        else {
+          error_val = 2;                                                                                    //bad error: wrong data received
         }
       }
-      else{
+      else {
         error_val = 3;
       }
     }
     is_first_write = 0;
   }
-  if(error_val == 0 && data_sent == 0){
+  if (error_val == 0 && data_sent == 0) {
     error_val = 4;
-    output_buffer_counter = 0;        
+    output_buffer_counter = 0;
   }
 }
 
-void write_data(uint8_t data_out){
+void write_data(uint8_t data_out) {
   error_val = 0;
   error_counter = 0;
   data_sent = 0;
-  if (output_buffer_counter == 0){
-    t_output = micros();
+  if (output_buffer_counter == 0) {
+    t_output = micros();                                                                                    //start timer for data sending program
   }
-  output_data_buffer[(output_buffer_counter)%buffer_len] = data_out;
+  output_data_buffer[(output_buffer_counter) % buffer_len] = data_out;                                      //write data to output buffer
   output_buffer_counter ++;
 }
 
 //Read Functions
 
-uint8_t receive_byte(void){
+uint8_t receive_byte(void) {
   uint8_t data = 0;
-  for (int i = 0; i < 8; i++){
-     data = data << 1;
-     data += !digitalRead(inputs_8_bit[i]);
+  for (int i = 0; i < 8; i++) {
+    data = data << 1;
+    data += !digitalRead(inputs_8_bit[i]);                                                                  //invert bits as INPUT_PULLUP
   }
   return data;
 }
 
- void receive_data(void){
+void receive_data(void) {
 
   ack_byte = receive_byte();
   t_start = micros();
-  
-  send_byte(prev_in_byte);  
-  while (ack_byte == check_byte && micros() - t_start < 300){
+
+  send_byte(prev_in_byte);                                                                                  //send handshake acknowledgement
+  while (ack_byte == check_byte && micros() - t_start < 300) {                                              //wait for received value to change
     ack_byte = receive_byte();
   }
 
-  uint32_t t_temp = micros();
-  while (micros() - t_temp < 200); 
-  
-  input_data_buffer[input_buffer_counter%buffer_len] = receive_byte();
+  uint32_t t_temp = micros();                                                                               //wait for new data to be pushed out
+  while (micros() - t_temp < 200);
+
+  input_data_buffer[input_buffer_counter % buffer_len] = receive_byte();                                    //write data to input buffer
 
   check_byte = ~receive_byte();
   send_byte(check_byte);
   prev_in_byte = receive_byte();
-  start_byte = prev_in_byte; 
+  start_byte = prev_in_byte;
   prev_out_byte = check_byte;
-  
+
   input_buffer_counter ++;
   return;
 }
 
-uint8_t read_data(void){                          //FIFO buffer
+uint8_t read_data(void) {
   uint8_t temp_3 = 0;
   uint8_t temp_4 = 0;
-  if (input_buffer_counter > 0){
-    if (input_buffer_counter > 10){
-      temp_3 = (input_buffer_counter+1)%buffer_len;   
+  if (input_buffer_counter > 0) {
+    if (input_buffer_counter > 10) {
+      temp_3 = (input_buffer_counter + 1) % buffer_len;                                                     //Circular buffer
     }
-    
+
     temp_4 = input_data_buffer[temp_3];
-    
-    for (int i = 0; i < buffer_len; i++){
-      input_data_buffer[(i+temp_3)%buffer_len] = input_data_buffer[(i+temp_3+1)%buffer_len];
+
+    for (int i = 0; i < buffer_len; i++) {
+      input_data_buffer[(i + temp_3) % buffer_len] = input_data_buffer[(i + temp_3 + 1) % buffer_len];      //delete read data and free up space inn buffer
     }
-    
+
     input_buffer_counter--;
 
-  } 
+  }
   return temp_4;
 }
 
 //Interrupt Service Routine
 
-bool send_receive_ack(struct repeating_timer *t){
-  
-  //cancel_repeating_timer (&timer);
-  if (error_val == 0){
-    if (output_buffer_counter >0){
+bool send_receive_ack(struct repeating_timer *t) {
+
+  if (error_val == 0) {
+    if (output_buffer_counter > 0) {
       send_data();
       prev_in_byte = receive_byte();
     }
-    else if((receive_byte() == check_byte)){
+    else if ((receive_byte() == check_byte)) {
       receive_data();
     }
-  }      
-  if (error_val != 0){
-      check_byte = ~receive_byte();
-      send_byte(check_byte);
-      prev_in_byte = receive_byte();
-      start_byte = prev_in_byte; 
-      prev_out_byte = check_byte;
-    }  
-  //add_repeating_timer_us(-100, send_receive_ack, NULL, &timer);  
+  }
+  if (error_val != 0) {
+    check_byte = ~receive_byte();                                                                           //Reset parameters
+    send_byte(check_byte);
+    prev_in_byte = receive_byte();
+    start_byte = prev_in_byte;
+    prev_out_byte = check_byte;
+  }
   return true;
 }
