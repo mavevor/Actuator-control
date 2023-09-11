@@ -28,18 +28,18 @@ int sensor_val = 0;
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(57600);
+  //Serial.begin(57600);
   setup_comms();
   for (int i = 0; i < 3; i++) {
     analogWrite(ACTUATOR[i], dist[i]);
   }
   write_data(MASTER_RESET_KEY);
-  watchdog_enable(100, 1);
+  watchdog_enable(100, 1);                                                                    //1000ms watchdog timer
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-  if (error_val != 0) {      
+  if (error_val != 0) {
     write_data(MASTER_RESET_KEY);
     for (int i = 0; i < 3; i++) {
       dist[i] = 0;
@@ -53,7 +53,7 @@ void loop() {
 
   measure_force();
   calculate_pid();
-  if (input_buffer_counter == 0 && (micros() - force_timer > 100000)) {
+  if (input_buffer_counter == 0 && (micros() - force_timer > 100000)) {                   //send force data every 100ms
     write_data(force_data_out);
     force_timer = micros();
   }
@@ -80,13 +80,13 @@ void loop() {
         PID_ON_STATE[i] = 0;
       }
     }
-    
+
     else if ((key_index + 1) && !(state_index + 1)) {                  // key_index + 1 non zero if in_byte in KEY_LIST
-      out_byte = KEY_LIST[key_index] - 1;                         // state_index + 1 zero if all states are 0
+      out_byte = KEY_LIST[key_index] - 1;                              // state_index + 1 zero if all states are 0
       write_data((byte) out_byte);
       ON_STATE[key_index] = 1;
     }
-    
+
     else if ((state_index + 1) && !(pid_state_index + 1)) {
       dist[state_index] = in_byte;
       out_byte = dist[state_index] + 1;
@@ -95,14 +95,14 @@ void loop() {
       ON_STATE[state_index] = 0;
       PID_STATE[state_index] = 1;
     }
-    
+
     else if ((pid_key_index + 1) && (pid_state_index + 1)) {
       out_byte = PID_KEY_LIST[pid_key_index];
       write_data((byte) out_byte);
       PID_STATE[pid_state_index] = 0;
       PID_ON_STATE[pid_state_index] = pid_key_index;
     }
-    
+
     if (pid_state_index + 1) {
       analogWrite(ACTUATOR[pid_state_index], dist[pid_state_index]);
       max_dist[pid_state_index] = 1.1 * dist[pid_state_index];          //pid controller acts over distances +- 10% of set value
@@ -110,9 +110,11 @@ void loop() {
         max_dist[pid_state_index] = 255;
       }
       min_dist[pid_state_index] = 0.9 * dist[pid_state_index];
-      
+
       uint32_t t_temp = micros();
-      while (micros() - t_temp < 1000000){
+      while (micros() - t_temp < 1000000) {
+        measure_force();
+        calculate_pid();
         watchdog_update();                                      //wait for actuator to get to position
       }
       loop_timer = micros();
